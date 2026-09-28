@@ -2,10 +2,11 @@ from __future__ import annotations
 
 from typing import Any, Callable, TypeVar
 
-from pydantic import BaseModel
+from pydantic import AfterValidator, BaseModel
 from pydantic import ValidationError as PydanticValidationError
 
 from .errors import error_body
+from .types import validate_file, validate_image
 
 InputT = TypeVar("InputT", bound=BaseModel)
 OutputT = TypeVar("OutputT", bound=BaseModel)
@@ -92,14 +93,25 @@ def _required_fields(model: type[BaseModel]) -> dict[str, str]:
     # dropped so the backend's all-required semantics match what the model actually
     # requires.
     return {
-        field_name: _type_repr(field.annotation)
+        field_name: _type_repr(field)
         for field_name, field in model.model_fields.items()
         if field.is_required()
     }
 
 
-def _type_repr(annotation: Any) -> str:
-    return getattr(annotation, "__name__", str(annotation))
+def _type_repr(field: Any) -> str:
+    # Image/File are both Annotated[str, AfterValidator(...)] — indistinguishable
+    # from any other Annotated[str, ...] by shape alone. Pydantic also strips the
+    # Annotated wrapper off field.annotation (leaving plain `str`) and moves the
+    # extras into field.metadata instead, so detection has to look there, keyed
+    # off the identity of the specific validator function levragent.types attaches.
+    for metadata in field.metadata:
+        if isinstance(metadata, AfterValidator):
+            if metadata.func is validate_image:
+                return "image"
+            if metadata.func is validate_file:
+                return "file"
+    return getattr(field.annotation, "__name__", str(field.annotation))
 
 
 def agent(
